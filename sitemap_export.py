@@ -13,6 +13,7 @@ import csv
 import io
 import gzip
 import re
+import time
 from typing import Dict, List, Tuple, Iterable, Set
 from urllib.parse import urlparse, urljoin, urlunparse
 
@@ -46,11 +47,23 @@ def _robots_url_for(site_url: str) -> str:
     scheme = p.scheme or "https"
     return urlunparse((scheme, host, "/robots.txt", "", "", ""))
 
-
-def _fetch_bytes(url: str, headers: dict) -> bytes:
-    r = requests.get(url, headers=headers, timeout=REQ_TIMEOUT, allow_redirects=True)
-    r.raise_for_status()
-    data = r.content
+def _fetch_bytes(url: str, headers: dict, retries: int = 2, backoff: float = 1.5) -> bytes:
+    """
+    Fetch bytes with small retry/backoff to reduce false-negative timeouts on sitemap indexes.
+    """
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            r = requests.get(url, headers=headers, timeout=REQ_TIMEOUT, allow_redirects=True)
+            r.raise_for_status()
+            data = r.content
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(backoff ** attempt)
+                continue
+            raise
     # Support .gz sitemaps or gzipped content-type/encoding
     if url.lower().endswith(".gz") or r.headers.get("Content-Encoding", "").lower() == "gzip":
         try:
@@ -124,10 +137,6 @@ def extract_from_sitemapindex(root: etree._Element, base_url: str) -> List[str]:
     # Try both namespaced and non-namespaced forms
     site_nodes = root.findall(".//{*}sitemap") or root.findall(".//sitemap")
     out = []
-    for sn in site_nodes:
-        loc = sn.find("./{*}loc") or sn.find("./loc")
-        if loc is not None and (loc.text or "").strip():
-            out.append(_abs(loc.text.strip(), base_url))
     for sn in site_nodes:
         loc = sn.find("./{*}loc")
         if loc is None:
@@ -239,8 +248,7 @@ def evaluate_crawlability(site_or_sitemap: str, ua: str, all_urls: Iterable[str]
     """
     p = urlparse(site_or_sitemap)
     root = urlunparse(((p.scheme or "https"), p.netloc or p.path, "/", "", "", ""))
-
-    rp, ok = robots_parser(urljoin(root, "/robots.txt"), ua)  # your helper (returns (rp, True/False)) :contentReference[oaicite:7]{index=7}
+    rp, ok, _raw = robots_parser(urljoin(root, "/robots.txt"), ua)  # returns (rp, ok, raw)
     allowed: Dict[str, bool] = {}
     for u in all_urls:
         try:

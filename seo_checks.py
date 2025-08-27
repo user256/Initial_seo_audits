@@ -37,11 +37,9 @@ def robots_parser(robots_url: str, ua: str):
 
 def is_crawlable(rp, ua: str, url: str) -> bool:
     try:
+        # If parser missing or parsed nothing, treat as allow-all.
         if rp is None:
             return True
-        return rp.can_fetch(ua, url)
-        # Defensive: if the parser parsed nothing (no entries), treat as allow-all.
-        # This matches your expectation for a "User-agent: *\nDisallow:" file.
         if getattr(rp, "entries", None) in (None, []):
             return True
         return rp.can_fetch(ua, url)

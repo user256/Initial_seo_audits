@@ -1,0 +1,114 @@
+[INFO] Logging results to seo_report_dotesports.com.txt
+[INFO] Using URL: https://dotesports.com
+[INFO] Using User-Agent: paradise-crawler
+
+================================================================================
+1) Fetching WITHOUT JavaScript
+================================================================================
+Final URL: https://dotesports.com/  |  Status: 200  |  HTML length: 1,676,340
+
+================================================================================
+2) Fetching WITH JavaScript
+================================================================================
+Final URL: https://dotesports.com/  |  Status: 200  |  HTML length: 1,698,529
+
+================================================================================
+RESULTS — Manual Checks (JS vs No-JS)
+================================================================================
+Meta/title/description/canonical/robots parity:
+ - <title> same: True | noJS='Dot Esports - Gaming and Esports News, Analysis, and Guides' | JS='Dot Esports - Gaming and Esports News, Analysis, and Guides'
+ - <meta name='description'> same: True
+ - HTML <link rel='canonical'> same: True
+   noJS canonical (HTML): https://dotesports.com/
+   JS   canonical (HTML): https://dotesports.com/
+ - HTTP Link rel='canonical' same: True
+   noJS canonical (HTTP): (none)
+   JS   canonical (HTTP): (none)
+ - <meta name='robots'> same: True
+   noJS robots (meta): 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1'
+   JS   robots (meta): 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1'
+ - X-Robots-Tag (HTTP header) same: True
+   noJS X-Robots-Tag: '(none)'
+   JS   X-Robots-Tag: '(none)'
+ - H1 counts (noJS / JS): 0 / 0
+
+Internal link parity (normalized, same host incl. www/non-www):
+ - Count no-JS: 83
+ - Count JS:    83
+ - Overlap:     83
+
+================================================================================
+RESULTS — robots.txt
+================================================================================
+robots.txt URL: https://dotesports.com/robots.txt | retrieved: True
+----- robots.txt (preview) -----
+# XML Sitemap & Google News version 5.4.9 - https://status301.net/wordpress-plugins/xml-sitemap-feed/
+Sitemap: https://dotesports.com/sitemap-news.xml
+# START YOAST BLOCK
+# ---------------------------
+User-agent: *
+Disallow:
+
+Sitemap: https://dotesports.com/sitemap_index.xml
+# ---------------------------
+# END YOAST BLOCK
+----- end robots.txt preview -----
+ - Checked 83 internal links; blocked by robots: 0
+
+================================================================================
+RESULTS — URL Consolidation
+================================================================================
+HTTP → HTTPS:
+ - Tested: http://dotesports.com/
+ - Final:  https://dotesports.com/
+ - Redirects to HTTPS: True
+ - Status/History: 200 via [301]
+
+WWW vs non-WWW consolidation (HTTPS):
+ - Bare final: https://dotesports.com/
+ - WWW  final: https://dotesports.com/
+ - Consolidated to same canonical: True
+
+camelCase vs lowercase URL handling:
+ - Lowercase sample: https://dotesports.com/wow
+ - UPPER variant:
+   · Tested         : https://dotesports.com/WOW
+   · Final          : https://media.dotesports.com/wp-content/uploads/2018/08/08223435/WoW.jpg
+   · Status         : 200
+   · Redirects->lower: False
+   · HTML canonical : (none)
+   · Header Link can: (none)
+   · Chosen canonical: (none)
+   · Canon->lower   : False
+   · Acceptable     : False (redirect OR canonical OR 404)
+ - camel variant (mixed case):
+   · Tested         : https://dotesports.com/WoW
+   · Final          : https://media.dotesports.com/wp-content/uploads/2018/08/08223435/WoW.jpg
+   · Status         : 200
+   · Redirects->lower: False
+   · HTML canonical : (none)
+   · Header Link can: (none)
+   · Chosen canonical: (none)
+   · Canon->lower   : False
+   · Acceptable     : False (redirect OR canonical OR 404)
+
+Custom 404 behavior:
+ - Tested: https://dotesports.com/__crawler-404-test-21388  | Final status: 404  | Proper 404: True
+
+================================================================================
+RESULTS — Internal Link Accessibility
+================================================================================
+ - 83/83 internal links returned 200 OK
+ - No internal links disallowed by robots.txt for this UA.
+
+================================================================================
+SITEMAPS — Discover, Export, and Robots Checks
+================================================================================
+[OK] Sitemaps discovered: 2  | URLs harvested: 31
+[OK] CSV written: sitemaps_dotesports_com.csv
+[INFO] Robots check on sitemap URLs — blocked: 0 / 31
+
+================================================================================
+SUMMARY FLAGS
+================================================================================
+ - Uppercase/mixed-case variants neither redirect nor canonicalize to lowercase and don’t 404 (potential duplicate).

@@ -383,11 +383,9 @@ def main():
     except Exception as e:
         logger.log(f"[WARN] Sitemap harvest/export failed: {e}")
 
-
     # ------------------------
     # SUMMARY FLAGS
     # ------------------------
-
 
     # Fail if any scraped internal link is not robots-allowed or not 200
     flags = []
@@ -455,7 +453,6 @@ def main():
         logger.log("No issues detected by automated checks.")
 
     logger.close()
-
 
 if __name__ == "__main__":
     try:
