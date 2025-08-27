@@ -1,0 +1,110 @@
+[INFO] Logging results to seo_report_uisgebeatha.co.uk.txt
+[INFO] Using URL: https://uisgebeatha.co.uk/
+[INFO] Using User-Agent: paradise-crawler
+
+================================================================================
+1) Fetching WITHOUT JavaScript
+================================================================================
+Final URL: https://uisgebeatha.co.uk/  |  Status: 200  |  HTML length: 47,241
+
+================================================================================
+2) Fetching WITH JavaScript
+================================================================================
+Final URL: https://uisgebeatha.co.uk/  |  Status: 200  |  HTML length: 46,578
+
+================================================================================
+RESULTS — Manual Checks (JS vs No-JS)
+================================================================================
+Meta/title/description/canonical/robots parity:
+ - <title> same: True | noJS='Whisky Price comparison | Get the cheapest prices here | Uisge Beatha' | JS='Whisky Price comparison | Get the cheapest prices here | Uisge Beatha'
+ - <meta name='description'> same: True
+ - HTML <link rel='canonical'> same: True
+   noJS canonical (HTML): https://uisgebeatha.co.uk/
+   JS   canonical (HTML): https://uisgebeatha.co.uk/
+ - HTTP Link rel='canonical' same: True
+   noJS canonical (HTTP): (none)
+   JS   canonical (HTTP): (none)
+ - <meta name='robots'> same: True
+   noJS robots (meta): 'follow, index, max-snippet:-1, max-video-preview:-1, max-image-preview:large'
+   JS   robots (meta): 'follow, index, max-snippet:-1, max-video-preview:-1, max-image-preview:large'
+ - X-Robots-Tag (HTTP header) same: True
+   noJS X-Robots-Tag: '(none)'
+   JS   X-Robots-Tag: '(none)'
+ - H1 counts (noJS / JS): 1 / 1
+
+Internal link parity (normalized, same host incl. www/non-www):
+ - Count no-JS: 52
+ - Count JS:    52
+ - Overlap:     52
+
+================================================================================
+RESULTS — robots.txt
+================================================================================
+robots.txt URL: https://uisgebeatha.co.uk/robots.txt | retrieved: True
+----- robots.txt (preview) -----
+User-agent: *
+Disallow: /wp-admin/
+Disallow: /scraper/
+Allow: /wp-admin/admin-ajax.php
+
+Sitemap: https://uisgebeatha.co.uk/sitemap_index.xml
+----- end robots.txt preview -----
+ - Checked 52 internal links; blocked by robots: 0
+
+================================================================================
+RESULTS — URL Consolidation
+================================================================================
+HTTP → HTTPS:
+ - Tested: http://uisgebeatha.co.uk/
+ - Final:  https://uisgebeatha.co.uk/
+ - Redirects to HTTPS: True
+ - Status/History: 200 via [301]
+
+WWW vs non-WWW consolidation (HTTPS):
+ - Bare final: https://uisgebeatha.co.uk/
+ - WWW  final: https://uisgebeatha.co.uk/
+ - Consolidated to same canonical: True
+
+camelCase vs lowercase URL handling:
+ - Lowercase sample: https://uisgebeatha.co.uk/sitemap/
+ - UPPER variant:
+   · Tested         : https://uisgebeatha.co.uk/SITEMAP/
+   · Final          : https://uisgebeatha.co.uk/SITEMAP/
+   · Status         : 200
+   · Redirects->lower: False
+   · HTML canonical : https://uisgebeatha.co.uk/sitemap/
+   · Header Link can: (none)
+   · Chosen canonical: https://uisgebeatha.co.uk/sitemap
+   · Canon->lower   : True
+   · Acceptable     : True (redirect OR canonical OR 404)
+ - camel variant (mixed case):
+   · Tested         : https://uisgebeatha.co.uk/SiTeMaP/
+   · Final          : https://uisgebeatha.co.uk/SiTeMaP/
+   · Status         : 200
+   · Redirects->lower: False
+   · HTML canonical : https://uisgebeatha.co.uk/sitemap/
+   · Header Link can: (none)
+   · Chosen canonical: https://uisgebeatha.co.uk/sitemap
+   · Canon->lower   : True
+   · Acceptable     : True (redirect OR canonical OR 404)
+
+Custom 404 behavior:
+ - Tested: https://uisgebeatha.co.uk/__crawler-404-test-19101  | Final status: 404  | Proper 404: True
+
+================================================================================
+RESULTS — Internal Link Accessibility
+================================================================================
+ - 52/52 internal links returned 200 OK
+ - No internal links disallowed by robots.txt for this UA.
+
+================================================================================
+SITEMAPS — Discover, Export, and Robots Checks
+================================================================================
+[OK] Sitemaps discovered: 9  | URLs harvested: 4,553
+[OK] CSV written: sitemaps_uisgebeatha_co_uk.csv
+[INFO] Robots check on sitemap URLs — blocked: 0 / 4553
+
+================================================================================
+SUMMARY FLAGS
+================================================================================
+No issues detected by automated checks.

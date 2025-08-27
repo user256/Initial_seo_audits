@@ -344,7 +344,16 @@ def main():
         if not start_sitemaps:
             logger.log("[WARN] No sitemaps discovered via robots.txt and input URL is not a sitemap; skipping sitemap export.")
         else:
-            crawled_sitemaps, url_map, url_source = crawl_all_sitemaps(start_sitemaps, headers=sm_headers)
+            crawled_sitemaps, url_map, url_source, sm_debug = crawl_all_sitemaps(start_sitemaps, headers=sm_headers)
+
+            # Helpful when a site is flaky / rate-limited
+            logger.log("[DEBUG] Per-sitemap results (kind/status/count):")
+            for row in sm_debug[:200]:  # avoid huge logs
+                kind = row.get("kind")
+                status = row.get("status")
+                cnt = row.get("count")
+                err = row.get("error") or "-"
+                logger.log(f"  - {row['url']}  | {kind} | {status} | items={cnt} | err={err}")
 
             # Robots-only evaluation for ALL sitemap URLs (no status fetch)
             sitemap_allowed = evaluate_crawlability(start_url, ua, url_map.keys())

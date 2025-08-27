@@ -1,305 +1,228 @@
 # sitemap_export.py
-"""
-Sitemap harvesting + robots.txt crawlability + CSV export.
-
-- Pull sitemap URLs from robots.txt
-- Recurse through sitemap indexes
-- Extract <url><loc> plus xhtml:link hreflang alternates
-- Evaluate crawlability for a given UA using robots.txt
-- Export CSV: url, hreflangs, hrefs, crawlable, source_sitemap
-"""
-
-import csv
 import io
-import gzip
+import os
 import re
+import gzip
 import time
-from typing import Dict, List, Tuple, Iterable, Set
-from urllib.parse import urlparse, urljoin, urlunparse
+import random
+from typing import Dict, Iterable, List, Tuple
+from urllib.parse import urljoin, urlparse
 
 import requests
+from requests.adapters import HTTPAdapter, Retry
 from lxml import etree
 
-from seo_checks import robots_parser, is_crawlable as rp_can_fetch  # reuse your helpers :contentReference[oaicite:5]{index=5}
-from fetch_render import norm_host, norm_url  # consistent URL normalization with the rest of the tool :contentReference[oaicite:6]{index=6}
-
-REQ_TIMEOUT = 20  # mirrors defaults in your codebase
-
-XML_PARSER = etree.XMLParser(ns_clean=True, recover=True, remove_comments=True, resolve_entities=False)
-
-# Accepted namespaces often seen in sitemaps (we'll still interrogate dynamically)
-NS_HINTS = {
-    'sm': "http://www.sitemaps.org/schemas/sitemap/0.9",
-    'xhtml': "http://www.w3.org/1999/xhtml",
-    'image': "http://www.google.com/schemas/sitemap-image/1.1",
-    'video': "http://www.google.com/schemas/sitemap-video/1.1",
-    'news': "http://www.google.com/schemas/sitemap-news/0.9",
+REQ_TIMEOUT = 45
+FETCH_HEADERS = {
+    "User-Agent": "paradise-crawler (+sitemap-export)",
+    "Accept": "application/xml,text/xml,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
 }
 
+def _retry_session() -> requests.Session:
+    s = requests.Session()
+    retries = Retry(
+        total=6,
+        connect=3,
+        read=3,
+        backoff_factor=0.6,            # 0.6, 1.2, 2.4, 4.8, ...
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(["GET", "HEAD"]),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retries, pool_connections=10, pool_maxsize=10)
+    s.mount("http://", adapter)
+    s.mount("https://", adapter)
+    return s
 
-def _abs(url: str, base: str) -> str:
-    return norm_url(urljoin(base, url))  # resolves + normalizes in one place
+def _is_probably_html(b: bytes) -> bool:
+    sniff = b[:512].lower()
+    return b"<html" in sniff or b"<!doctype html" in sniff
 
-
-def _robots_url_for(site_url: str) -> str:
-    p = urlparse(site_url)
-    host = p.netloc or site_url
-    scheme = p.scheme or "https"
-    return urlunparse((scheme, host, "/robots.txt", "", "", ""))
-
-def _fetch_bytes(url: str, headers: dict, retries: int = 2, backoff: float = 1.5) -> bytes:
-    """
-    Fetch bytes with small retry/backoff to reduce false-negative timeouts on sitemap indexes.
-    """
-    last_err = None
-    for attempt in range(retries + 1):
+def _get_xml(url: str, headers=None, timeout=REQ_TIMEOUT) -> Tuple[bytes, int, str]:
+    """Fetch XML or XML.GZ; return (bytes, status_code, content_type)."""
+    h = dict(FETCH_HEADERS)
+    if headers:
+        h.update(headers)
+    sess = _retry_session()
+    r = sess.get(url, headers=h, timeout=timeout, allow_redirects=True)
+    ct = r.headers.get("content-type", "")
+    data = r.content
+    # If it's a .gz file and server didn't decode, try manual gunzip
+    if url.lower().endswith(".gz"):
         try:
-            r = requests.get(url, headers=headers, timeout=REQ_TIMEOUT, allow_redirects=True)
-            r.raise_for_status()
-            data = r.content
-            break
-        except Exception as e:
-            last_err = e
-            if attempt < retries:
-                time.sleep(backoff ** attempt)
-                continue
-            raise
-    # Support .gz sitemaps or gzipped content-type/encoding
-    if url.lower().endswith(".gz") or r.headers.get("Content-Encoding", "").lower() == "gzip":
-        try:
-            return gzip.decompress(data)
-        except OSError:
-            # Some servers send already decompressed but keep .gz extension
-            return data
-    return data
+            data = gzip.decompress(data)
+        except Exception:
+            # requests may have already decompressed if Content-Encoding: gzip
+            pass
+    return data, r.status_code, ct
 
+def _parse_xml(xml_bytes: bytes):
+    parser = etree.XMLParser(recover=True, resolve_entities=False, no_network=True)
+    return etree.fromstring(xml_bytes, parser=parser)
 
-def _parse_xml(content: bytes) -> etree._ElementTree:
-    return etree.fromstring(content, parser=XML_PARSER)
+def _ln(el) -> str:
+    """local-name of an element/tag"""
+    if isinstance(el.tag, str):
+        return el.tag.split('}')[-1] if '}' in el.tag else el.tag
+    return ""
 
-
-def _detect_namespaces(root: etree._Element) -> Dict[str, str]:
-    # Merge any present nsmap with common hints (root.nsmap can have None key for default ns)
-    ns = dict(NS_HINTS)
-    for k, v in (root.nsmap or {}).items():
-        if k is None:
-            # default ns → treat as 'sm' if it looks like the sitemap ns
-            if v and "sitemap" in v:
-                ns.setdefault("sm", v)
+def _iter_text(node, xpath: str):
+    for el in node.xpath(xpath):
+        if isinstance(el, etree._Element):
+            t = (el.text or "").strip()
         else:
-            ns[k] = v
-    return ns
+            t = (str(el) or "").strip()
+        if t:
+            yield t
 
-
-def extract_from_urlset(root: etree._Element, base_url: str) -> Dict[str, dict]:
-    """
-    Extract <url><loc> plus any xhtml:link alternates from a <urlset>.
-    Returns: { url: {"hreflangs": [...], "hrefs": [...]} }
-    """
-    ns = _detect_namespaces(root)
-    # Try both namespaced and non-namespaced forms
-    url_nodes = root.findall(".//{*}url") or root.findall(".//url")
-    out = {}
-
-    for u in url_nodes:
-        # Explicitly avoid Element truth-testing; check both namespaced and non-namespaced
-        loc_node = u.find("./{*}loc")
-        if loc_node is None:
-            loc_node = u.find("./loc")
-        if loc_node is None:
-            continue
-        if not (loc_node.text or "").strip():
-            continue
-        loc = _abs(loc_node.text.strip(), base_url)
-
-        # hreflang alternates
-        links = []
-        hreflangs = []
-        # Prefer xhtml ns, but fall back to any rel='alternate' pattern if ns varies
-        xhtml_links = u.findall(".//{*}link")  # catch xhtml:link or similarly bound
-        for ln in xhtml_links:
-            rel = (ln.get("rel") or "").lower()
-            hre = (ln.get("hreflang") or "").strip()
-            href = (ln.get("href") or "").strip()
-            if rel == "alternate" and href:
-                links.append(_abs(href, base_url))
-                if hre:
-                    hreflangs.append(hre)
-
-        out[loc] = {"hreflangs": hreflangs, "hrefs": links}
-    return out
-
-
-def extract_from_sitemapindex(root: etree._Element, base_url: str) -> List[str]:
-    """
-    Extract nested <sitemap><loc> URLs from a <sitemapindex>.
-    """
-    # Try both namespaced and non-namespaced forms
-    site_nodes = root.findall(".//{*}sitemap") or root.findall(".//sitemap")
-    out = []
-    for sn in site_nodes:
-        loc = sn.find("./{*}loc")
-        if loc is None:
-            loc = sn.find("./loc")
-        if loc is None:
-            continue
-        text = (loc.text or "").strip()
-        if not text:
-            continue
-        out.append(_abs(text, base_url))
-    return out
-
-def is_index(root: etree._Element) -> bool:
-    tag = etree.QName(root.tag).localname.lower()
-    return tag == "sitemapindex"
-
-
-def process_sitemap_url(sitemap_url: str, headers: dict) -> Tuple[List[str], Dict[str, dict]]:
-    """
-    Returns (nested_sitemaps, url_map).
-      - nested_sitemaps: list of more sitemap URLs (if this was an index)
-      - url_map: { url: {"hreflangs": [...], "hrefs": [...]} } (if this was a urlset)
-    """
+def sitemaps_from_robots(start_url: str, headers=None) -> List[str]:
+    parsed = urlparse(start_url)
+    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    h = dict(FETCH_HEADERS)
+    if headers:
+        h.update(headers)
     try:
-        data = _fetch_bytes(sitemap_url, headers=headers)
-    except Exception as e:
-        print(f"[WARN] Failed fetching sitemap {sitemap_url}: {e}")
-        return [], {}
-
-    try:
-        root = _parse_xml(data)
-    except Exception as e:
-        print(f"[WARN] Invalid XML for {sitemap_url}: {e}")
-        return [], {}
-
-    # Decide whether <sitemapindex> or <urlset>
-    if is_index(root):
-        return extract_from_sitemapindex(root, sitemap_url), {}
-    else:
-        return [], extract_from_urlset(root, sitemap_url)
-
-
-def sitemaps_from_robots(site_or_sitemap: str, headers: dict) -> List[str]:
-    """
-    If input is a direct sitemap URL (contains '.xml' or '.gz'), return that.
-    Otherwise fetch robots.txt and collect all 'Sitemap:' lines.
-    """
-    if re.search(r"\.(xml|gz)(\?.*)?$", site_or_sitemap, flags=re.I):
-        return [site_or_sitemap]
-
-    # Resolve to site root
-    p = urlparse(site_or_sitemap)
-    base = urlunparse(((p.scheme or "https"), p.netloc or p.path, "/", "", "", ""))
-
-    robots_url = _robots_url_for(base)
-    try:
-        r = requests.get(robots_url, headers=headers, timeout=REQ_TIMEOUT)
+        sess = _retry_session()
+        r = sess.get(robots_url, headers=h, timeout=REQ_TIMEOUT, allow_redirects=True)
         r.raise_for_status()
         sitemaps = []
         for line in r.text.splitlines():
             if line.lower().startswith("sitemap:"):
-                sm = line.split(":", 1)[1].strip()
-                if sm:
-                    sitemaps.append(_abs(sm, base))
-        return sorted(set(sitemaps))
-    except Exception as e:
-        print(f"[WARN] Could not read robots at {robots_url}: {e}")
+                loc = line.split(":", 1)[1].strip()
+                if not re.match(r"^https?://", loc, re.I):
+                    loc = urljoin(f"{parsed.scheme}://{parsed.netloc}/", loc)
+                sitemaps.append(loc)
+        # dedupe, preserve order
+        seen = set()
+        out = []
+        for u in sitemaps:
+            if u not in seen:
+                out.append(u); seen.add(u)
+        return out
+    except Exception:
         return []
 
-
-def crawl_all_sitemaps(start_sitemaps: Iterable[str], headers: dict, max_to_crawl: int = 50_000) -> Tuple[Set[str], Dict[str, dict], Dict[str, str]]:
-    """
-    Recursively crawl every sitemap and accumulate URL entries.
-    Returns:
-      - crawled_sitemaps: set of sitemap URLs fetched
-      - url_map: { url: {"hreflangs": [...], "hrefs": [...]} }
-      - url_source: { url: source_sitemap_url }  (first seen source)
-    """
-    queue = list(dict.fromkeys(start_sitemaps))  # de-dup but preserve order
-    crawled = set()
-    url_map: Dict[str, dict] = {}
-    url_source: Dict[str, str] = {}
-
-    while queue and len(crawled) < max_to_crawl:
-        sm = queue.pop(0)
-        if sm in crawled:
+def _parse_urlset(root, base_url: str):
+    results = []
+    for url_el in root.xpath("//*[local-name()='urlset']/*[local-name()='url']"):
+        locs = list(_iter_text(url_el, ".//*[local-name()='loc']/text()"))
+        if not locs:
             continue
-        nested, urls = process_sitemap_url(sm, headers=headers)
-        crawled.add(sm)
+        loc = urljoin(base_url, locs[0])
 
-        for u, info in urls.items():
-            if u not in url_map:
-                url_map[u] = info
-                url_source[u] = sm
+        # hreflang alternates (xhtml:link rel=alternate hreflang=… href=…)
+        hreflangs, hrefs = [], []
+        for link in url_el.xpath(".//*[local-name()='link' and @rel='alternate' and @hreflang and @href]"):
+            hreflangs.append(link.get("hreflang"))
+            hrefs.append(link.get("href"))
+        results.append({"url": loc, "hreflangs": hreflangs, "hrefs": hrefs})
+    return results
 
-        for ns in nested:
-            if ns not in crawled:
-                queue.append(ns)
+def _parse_sitemapindex(root, base_url: str):
+    children = []
+    for sm in root.xpath("//*[local-name()='sitemapindex']/*[local-name()='sitemap']"):
+        locs = list(_iter_text(sm, ".//*[local-name()='loc']/text()"))
+        if locs:
+            children.append(urljoin(base_url, locs[0]))
+    return children
 
-        print(f"[INFO] Processed: {sm}")
-        print(f"       ├─ nested discovered: {len(nested)}")
-        print(f"       └─ total URLs so far: {len(url_map):,} | queue: {len(queue)}")
-    return crawled, url_map, url_source
-
-
-def evaluate_crawlability(site_or_sitemap: str, ua: str, all_urls: Iterable[str]) -> Dict[str, bool]:
+def crawl_all_sitemaps(
+    start_sitemaps: List[str],
+    headers=None,
+    max_sitemaps: int = 20000,
+    polite_sleep_range: Tuple[float, float] = (0.1, 0.35),
+):
     """
-    Build a robots parser for the site root, then check each URL’s permission.
+    Returns: (crawled_sitemaps, url_map, url_source, debug_info)
+      - crawled_sitemaps: set of parsed sitemap URLs
+      - url_map: dict url -> {"hreflangs": [...], "hrefs": [...]}
+      - url_source: dict url -> source sitemap URL
+      - debug_info: list of dicts per-sitemap: {url, kind, status, count, error}
     """
-    p = urlparse(site_or_sitemap)
-    root = urlunparse(((p.scheme or "https"), p.netloc or p.path, "/", "", "", ""))
-    rp, ok, _raw = robots_parser(urljoin(root, "/robots.txt"), ua)  # returns (rp, ok, raw)
-    allowed: Dict[str, bool] = {}
-    for u in all_urls:
+    h = dict(FETCH_HEADERS)
+    if headers:
+        h.update(headers)
+    to_visit = list(dict.fromkeys(start_sitemaps))
+    visited, crawled = set(), set()
+    url_map, url_source = {}, {}
+    debug_info = []
+
+    while to_visit and len(crawled) < max_sitemaps:
+        sm_url = to_visit.pop(0)
+        if sm_url in visited:
+            continue
+        visited.add(sm_url)
+
+        # be polite & dodge bot-fight: tiny random sleep
+        time.sleep(random.uniform(*polite_sleep_range))
+
+        kind, count, err, status = "unknown", 0, "", 0
         try:
-            allowed[u] = rp_can_fetch(rp, ua, u)  # your is_crawlable signature (rp, ua, url) :contentReference[oaicite:8]{index=8}
+            data, status, ct = _get_xml(sm_url, headers=h)
+            if status >= 400:
+                err = f"HTTP {status}"
+                debug_info.append({"url": sm_url, "kind": kind, "status": status, "count": count, "error": err})
+                continue
+            if _is_probably_html(data) or ("xml" not in (ct or "").lower()):
+                err = "Non-XML response (likely HTML interstitial or challenge)"
+                debug_info.append({"url": sm_url, "kind": kind, "status": status, "count": count, "error": err})
+                continue
+
+            root = _parse_xml(data)
+            root_name = _ln(root).lower()
+            if root_name == "sitemapindex" or root.xpath("boolean(//*[local-name()='sitemapindex'])"):
+                kind = "index"
+                children = _parse_sitemapindex(root, sm_url)
+                for child in children:
+                    if child not in visited:
+                        to_visit.append(child)
+                count = len(children)
+            else:
+                kind = "urlset"
+                records = _parse_urlset(root, sm_url)
+                for rec in records:
+                    u = rec["url"]
+                    if u not in url_map:
+                        url_map[u] = {"hreflangs": rec["hreflangs"], "hrefs": rec["hrefs"]}
+                        url_source[u] = sm_url
+                count = len(records)
+
+            crawled.add(sm_url)
+            debug_info.append({"url": sm_url, "kind": kind, "status": status, "count": count, "error": err})
+
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+            debug_info.append({"url": sm_url, "kind": "unknown", "status": status, "count": count, "error": err})
+            continue
+
+    return crawled, url_map, url_source, debug_info
+
+def evaluate_crawlability(start_url: str, user_agent: str, urls_iterable: Iterable[str]) -> Dict[str, bool]:
+    from seo_checks import robots_parser
+    parsed = urlparse(start_url)
+    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    rp, ok, _txt = robots_parser(robots_url, user_agent)
+    def _can(u):
+        try:
+            if not rp or not getattr(rp, "entries", None):
+                return True
+            return rp.can_fetch(user_agent, u)
         except Exception:
-            allowed[u] = True  # be permissive on parser errors
-    return allowed
+            return True
+    return {u: _can(u) for u in urls_iterable}
 
-
-def export_csv(out_path: str, rows: List[dict]) -> None:
+def export_csv(path: str, rows: List[dict]):
+    import csv, json
     fieldnames = ["url", "hreflangs", "hrefs", "crawlable", "source_sitemap"]
-    with open(out_path, "w", encoding="utf-8", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=fieldnames)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
         for r in rows:
             w.writerow({
                 "url": r["url"],
-                "hreflangs": "|".join(r.get("hreflangs") or []),
-                "hrefs": "|".join(r.get("hrefs") or []),
-                "crawlable": "TRUE" if r.get("crawlable") else "FALSE",
-                "source_sitemap": r.get("source_sitemap") or "",
+                "hreflangs": json.dumps(r.get("hreflangs") or []),
+                "hrefs": json.dumps(r.get("hrefs") or []),
+                "crawlable": r.get("crawlable", True),
+                "source_sitemap": r.get("source_sitemap", ""),
             })
-
-
-def export_sitemaps_csv(site_or_sitemap: str, ua: str, out_csv_path: str) -> Tuple[int, int, str]:
-    """
-    High-level convenience for CLI integration.
-    Returns: (sitemap_count, url_count, out_csv_path)
-    """
-    headers = {
-        "User-Agent": ua,
-        "Accept": "application/xml,text/xml,application/xhtml+xml;q=0.9,*/*;q=0.8",
-    }
-
-    start_sitemaps = sitemaps_from_robots(site_or_sitemap, headers=headers)
-    if not start_sitemaps:
-        raise RuntimeError("No sitemap URLs discovered (robots.txt had none and input was not a sitemap).")
-
-    crawled_sitemaps, url_map, url_source = crawl_all_sitemaps(start_sitemaps, headers=headers)
-
-    allowed = evaluate_crawlability(site_or_sitemap, ua, url_map.keys())
-
-    rows = []
-    for u, info in url_map.items():
-        rows.append({
-            "url": u,
-            "hreflangs": info.get("hreflangs") or [],
-            "hrefs": info.get("hrefs") or [],
-            "crawlable": allowed.get(u, True),
-            "source_sitemap": url_source.get(u, ""),
-        })
-
-    export_csv(out_csv_path, rows)
-    return len(crawled_sitemaps), len(url_map), out_csv_path
