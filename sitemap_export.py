@@ -89,9 +89,13 @@ def extract_from_urlset(root: etree._Element, base_url: str) -> Dict[str, dict]:
     out = {}
 
     for u in url_nodes:
-        # loc
-        loc_node = u.find("./{*}loc") or u.find("./loc")
-        if loc_node is None or not (loc_node.text or "").strip():
+        # Explicitly avoid Element truth-testing; check both namespaced and non-namespaced
+        loc_node = u.find("./{*}loc")
+        if loc_node is None:
+            loc_node = u.find("./loc")
+        if loc_node is None:
+            continue
+        if not (loc_node.text or "").strip():
             continue
         loc = _abs(loc_node.text.strip(), base_url)
 
@@ -124,8 +128,17 @@ def extract_from_sitemapindex(root: etree._Element, base_url: str) -> List[str]:
         loc = sn.find("./{*}loc") or sn.find("./loc")
         if loc is not None and (loc.text or "").strip():
             out.append(_abs(loc.text.strip(), base_url))
+    for sn in site_nodes:
+        loc = sn.find("./{*}loc")
+        if loc is None:
+            loc = sn.find("./loc")
+        if loc is None:
+            continue
+        text = (loc.text or "").strip()
+        if not text:
+            continue
+        out.append(_abs(text, base_url))
     return out
-
 
 def is_index(root: etree._Element) -> bool:
     tag = etree.QName(root.tag).localname.lower()
@@ -214,8 +227,9 @@ def crawl_all_sitemaps(start_sitemaps: Iterable[str], headers: dict, max_to_craw
             if ns not in crawled:
                 queue.append(ns)
 
-        print(f"[INFO] Processed: {sm}  | URLs so far: {len(url_map):,}  | Pending sitemaps: {len(queue)}")
-
+        print(f"[INFO] Processed: {sm}")
+        print(f"       ├─ nested discovered: {len(nested)}")
+        print(f"       └─ total URLs so far: {len(url_map):,} | queue: {len(queue)}")
     return crawled, url_map, url_source
 
 

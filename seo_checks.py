@@ -4,6 +4,7 @@ SEO checks: robots, consolidation, case sensitivity, 404s, and link status helpe
 import random
 import re
 from urllib.parse import urljoin, urlparse, urlunparse
+import requests
 
 import requests
 import lxml.html
@@ -17,17 +18,31 @@ REQ_TIMEOUT = 20
 # robots.txt
 # ----------------------------
 def robots_parser(robots_url: str, ua: str):
+    """
+    Fetch and parse robots.txt, and also return the raw text so callers can log it.
+    Returns: (rp, ok, raw_text)
+    """
     rp = urllib_robotparser.RobotFileParser()
     rp.set_url(robots_url)
+    raw = ""
     try:
-        rp.read()
-        return rp, True
+        # Fetch ourselves so we can log the content, then parse it.
+        r = requests.get(robots_url, headers={"User-Agent": ua}, timeout=REQ_TIMEOUT, allow_redirects=True)
+        r.raise_for_status()
+        raw = r.text or ""
+        rp.parse(raw.splitlines())
+        return rp, True, raw
     except Exception:
-        return None, False
+        return None, False, raw
 
 def is_crawlable(rp, ua: str, url: str) -> bool:
     try:
         if rp is None:
+            return True
+        return rp.can_fetch(ua, url)
+        # Defensive: if the parser parsed nothing (no entries), treat as allow-all.
+        # This matches your expectation for a "User-agent: *\nDisallow:" file.
+        if getattr(rp, "entries", None) in (None, []):
             return True
         return rp.can_fetch(ua, url)
     except Exception:

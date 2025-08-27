@@ -37,27 +37,9 @@ It helps detect issues where search engines or users might see different content
 
 ---
 
-## Installation
+# Setup (Recommended: Virtual Environment)
 
-Requires Python **3.8+**.
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-Dependencies include:
-- `requests`
-- `lxml`
-- `selenium`
-- `selenium-wire` (for capturing JS-rendered network requests)
-
-You’ll also need Chrome/Chromium installed.  
-Selenium Manager will handle ChromeDriver automatically.
-
----
-## Setup (Recommended: Virtual Environment)
+## Linux / macOS
 
 1. **Install venv & pip if missing**  
    ```bash
@@ -108,13 +90,57 @@ Without activating the environment:
 ```
 
 ---
-## Usage
 
-Run the checker from the command line:
+## Windows (PowerShell)
 
+If your PowerShell blocks script activation, start the shell as Administrator and run:
+   ```bash
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+   ```
+
+1. **Install venv & pip if missing**  
+   ```bash
+   sudo apt update
+   sudo apt install -y python3-venv python3-pip
+   ```
+
+2. **Create a virtual environment**  
+   ```bash
+   python -m venv audit_env
+   .\audit_env\Scripts\Activate.ps1
+   ```
+
+3. **Upgrade pip and install dependencies**  
+   ```bash
+   pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
+
+   > When finished working, you can exit the environment with:
+   ```bash
+   deactivate
+   ```
+
+Run the checker:
 ```bash
-python runner.py --url https://example.com --user-agent "MyBot/1.0" --max-links 120
+python runner.py --url https://whiskipedia.com --user-agent "paradise-crawler"
 ```
+
+### Option 2: Run directly via venv Python
+Without activating the environment:
+```bash
+# Use defaults (http://whiskipedia.com, UA "paradise-crawler")
+  .\audit_env\Scripts\python.exe runner.py
+
+# Specify a custom site & UA
+  .\audit_env\Scripts\python.exe runner.py --url https://whiskipedia.com -A "MySEOScanner/1.0"
+  .\audit_env\Scripts\python.exe runner.py --url https://dotesports.com -A "paradise-crawler"
+```
+
+
+
+
+---
 
 ### Arguments
 - `--url`  

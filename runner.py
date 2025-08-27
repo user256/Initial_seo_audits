@@ -126,7 +126,8 @@ def main():
     # robots.txt
     # ------------------------
     robots_url = urljoin(site_root, "/robots.txt")
-    rp, robots_ok = robots_parser(robots_url, ua)
+    # Fetch robots parser and the raw text for logging
+    rp, robots_ok, robots_text = robots_parser(robots_url, ua)
 
     # ------------------------
     # CONSOLIDATION
@@ -148,7 +149,17 @@ def main():
         sample_internal = sample_internal[:args.max_links]
 
     status_details = {u: get_status_detail(u, headers) for u in sample_internal}
-    robots_allow   = {u: (rp.can_fetch(ua, u) if rp else True) for u in sample_internal}
+    # Safe robots evaluation: allow if no rules were parsed.
+    def _robot_ok(u):
+        if not rp:
+            return True
+        if getattr(rp, "entries", None) in (None, []):
+            return True
+        try:
+            return rp.can_fetch(ua, u)
+        except Exception:
+            return True
+    robots_allow   = {u: _robot_ok(u) for u in sample_internal}
 
     ok_200_count = sum(1 for d in status_details.values() if d.get("status") == 200)
     non200_list  = [(u, d) for u, d in status_details.items() if d.get("status") != 200]
@@ -213,6 +224,12 @@ def main():
 
     pretty_header(logger, "RESULTS — robots.txt")
     logger.log(f"robots.txt URL: {robots_url} | retrieved: {bool(rp)}")
+    # Print the first ~40 lines to make debugging crystal-clear
+    if robots_text:
+        preview = "\n".join(robots_text.splitlines()[:40])
+        logger.log("----- robots.txt (preview) -----")
+        logger.log(preview)
+        logger.log("----- end robots.txt preview -----")
     blocked = [u for u, allowed in robots_allow.items() if not allowed]
     logger.log(f" - Checked {len(sample_internal)} internal links; blocked by robots: {len(blocked)}")
     for u in blocked[:50]:
@@ -373,6 +390,7 @@ def main():
 
 
     # Fail if any scraped internal link is not robots-allowed or not 200
+    flags = []
     scraped_fail = [
         u for u in sample_internal
         if not robots_allow.get(u, True) or status_details.get(u, {}).get("status") != 200
@@ -384,9 +402,7 @@ def main():
     if sm_blocked is not None and sm_blocked > 0:
         flags.append(f"{sm_blocked} sitemap URLs are disallowed by robots.txt for UA '{ua}'.")
 
-
     pretty_header(logger, "SUMMARY FLAGS")
-    flags = []
 
     if not meta_nojs["title"] or not meta_js["title"]:
         flags.append("Missing <title> in one or both renders.")
